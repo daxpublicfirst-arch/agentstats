@@ -1,10 +1,11 @@
 package transcript
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
+	"time"
 )
 
 // Pi transcript support (format v3, documented at
@@ -115,7 +116,7 @@ func normalizePiToolName(name string) string {
 }
 
 // parsePiFile reads one pi session file and returns its stats.
-func parsePiFile(path, root string) (*SessionStats, int, error) {
+func parsePiFile(path, root string, deadline time.Time) (*SessionStats, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, newToolError("READ_ERROR",
@@ -129,8 +130,9 @@ func parsePiFile(path, root string) (*SessionStats, int, error) {
 	skipped := 0
 	r := newLineReader(f)
 	var entries []piEntry
+	var lines int
 	for {
-		line, tooLong, ok, err := r.next()
+		line, _, tooLong, ok, err := r.next()
 		if err != nil {
 			return nil, skipped, newToolError("READ_ERROR",
 				"could not read transcript file "+path+": "+err.Error(),
@@ -144,12 +146,19 @@ func parsePiFile(path, root string) (*SessionStats, int, error) {
 			skipped++
 			continue
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
+		lines++
+		if lines%4096 == 0 && time.Now().After(deadline) {
+			return nil, skipped, newToolError("TIMEOUT",
+				"analysis exceeded the 60s limit",
+				"analyse a smaller session directory or a single .jsonl file",
+				"split the transcript directory into smaller parts", 3)
+		}
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
 			continue
 		}
 		var e piEntry
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
+		if err := json.Unmarshal(line, &e); err != nil {
 			skipped++
 			continue
 		}

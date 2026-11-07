@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -262,6 +263,76 @@ func TestServerToolUseCounted(t *testing.T) {
 	}
 	if got := out.Totals.Calls["WebSearch"]; got != 1 {
 		t.Fatalf("WebSearch calls = %d, want 1", got)
+	}
+}
+
+// Parallel parsing must produce byte-identical output to serial
+// parsing, even when a message.id group, a repeated tool_use.id or a
+// compaction duplicate straddles a chunk boundary. The threshold is
+// lowered so a small file takes the parallel path.
+func TestParallelMatchesSerial(t *testing.T) {
+	old := parallelMinBytes
+	defer func() { parallelMinBytes = old }()
+	content := `{"type":"assistant","uuid":"p-1a","sessionId":"par","message":{"id":"m1","content":[{"type":"thinking","thinking":"x"}],"usage":{"input_tokens":10,"output_tokens":20}}}
+{"type":"assistant","uuid":"p-1b","sessionId":"par","message":{"id":"m1","content":[{"type":"tool_use","id":"k1","name":"Bash","input":{"command":"go test ./..."}}],"usage":{"input_tokens":30,"output_tokens":60}}}
+{"type":"assistant","uuid":"p-2","sessionId":"par","message":{"id":"m2","content":[{"type":"tool_use","id":"k2","name":"Read","input":{"file_path":"main.go"}}],"usage":{"input_tokens":5,"output_tokens":5}}}
+{"type":"api-request-blob","uuid":"p-blob","sessionId":"par","message":{"content":[{"type":"tool_use","id":"k1","name":"Bash","input":{"command":"go test ./..."}}]}}
+{"type":"assistant","uuid":"p-2","sessionId":"par","message":{"id":"m2","content":[{"type":"tool_use","id":"k2","name":"Read","input":{"file_path":"main.go"}}],"usage":{"input_tokens":5,"output_tokens":5}}}
+{"type":"user","uuid":"p-u","sessionId":"par","message":{"role":"user","content":"go on"}}
+{"type":"assistant","uuid":"p-3","sessionId":"par","message":{"content":[{"type":"tool_use","id":"k3","name":"Bash","input":{"command":"go test ./..."}}],"usage":{"input_tokens":1,"output_tokens":1}}}
+not json at all
+{"type":"assistant","uuid":"p-4","sessionId":"par","message":{"id":"m3","content":[{"type":"tool_use","id":"k4","name":"Grep","input":{"path":"src","pattern":"TODO"}}],"usage":{"input_tokens":2,"output_tokens":2}}}
+`
+	dir := writeTempJSONL(t, content)
+	parallelMinBytes = 512
+	outPar, _, _, err := AnalyzePath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parallelMinBytes = 1 << 62
+	outSer, _, _, err := AnalyzePath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jPar, _ := json.Marshal(outPar)
+	jSer, _ := json.Marshal(outSer)
+	if string(jPar) != string(jSer) {
+		t.Fatalf("parallel output differs from serial:\nparallel: %s\nserial:   %s", jPar, jSer)
+	}
+	// And the expected values themselves (guards against both paths
+	// being wrong in the same way).
+	if got := outPar.Totals.Turns; got != 4 {
+		t.Fatalf("turns = %d, want 4 (m1, m2, no-id, m3)", got)
+	}
+	if got := outPar.Totals.Tokens.In; got != 38 {
+		t.Fatalf("tokens.in = %d, want 38 (30+5+1+2)", got)
+	}
+	if got := outPar.Totals.Calls["Bash"]; got != 2 {
+		t.Fatalf("Bash calls = %d, want 2 (k1 once despite the blob, k3 once)", got)
+	}
+	if got := outPar.Totals.Calls["Read"]; got != 1 {
+		t.Fatalf("Read calls = %d, want 1 (uuid duplicate must not recount)", got)
+	}
+	if outPar.Skipped != 1 {
+		t.Fatalf("skipped = %d, want 1 (the malformed line)", outPar.Skipped)
+	}
+	// The same check against the real fixtures.
+	for _, name := range []string{"basic", "chunked", "two"} {
+		parallelMinBytes = 512
+		p, _, _, err := AnalyzePath(filepath.Join("..", "..", "fixtures", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		parallelMinBytes = 1 << 62
+		s, _, _, err := AnalyzePath(filepath.Join("..", "..", "fixtures", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		jp, _ := json.Marshal(p)
+		js, _ := json.Marshal(s)
+		if string(jp) != string(js) {
+			t.Fatalf("fixture %s: parallel output differs from serial", name)
+		}
 	}
 }
 
