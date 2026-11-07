@@ -177,3 +177,124 @@ func TestDoctorPasses(t *testing.T) {
 		t.Fatal("doctor did not pass")
 	}
 }
+
+// One API message is several assistant lines sharing message.id, every
+// line repeating the usage. Turns and tokens must be counted once per
+// message.id (last usage wins); re-appended lines after /compact (same
+// uuid) must not count at all; a user message whose content is a plain
+// string must not be counted as skipped.
+func TestChunkedAssistantLinesCountOnce(t *testing.T) {
+	dir := writeTempJSONL(t, `{"type":"assistant","uuid":"u-1a","sessionId":"c1","message":{"id":"msg-1","content":[{"type":"thinking","thinking":"hmm"}],"usage":{"input_tokens":10,"output_tokens":20}}}
+{"type":"assistant","uuid":"u-1b","sessionId":"c1","message":{"id":"msg-1","content":[{"type":"text","text":"plan"}],"usage":{"input_tokens":20,"output_tokens":40}}}
+{"type":"assistant","uuid":"u-1c","sessionId":"c1","message":{"id":"msg-1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"git status"}}],"usage":{"input_tokens":30,"output_tokens":60}}}
+{"type":"assistant","uuid":"u-2","sessionId":"c1","message":{"id":"msg-2","content":[{"type":"tool_use","id":"t2","name":"Read","input":{"file_path":"a.ts"}}],"usage":{"input_tokens":5,"output_tokens":5}}}
+{"type":"assistant","uuid":"u-2","sessionId":"c1","message":{"id":"msg-2","content":[{"type":"tool_use","id":"t2","name":"Read","input":{"file_path":"a.ts"}}],"usage":{"input_tokens":5,"output_tokens":5}}}
+{"type":"user","uuid":"u-3","sessionId":"c1","message":{"role":"user","content":"hello"}}
+`)
+	out, _, _, err := AnalyzePath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Totals.Turns; got != 2 {
+		t.Fatalf("turns = %d, want 2 (one per message.id)", got)
+	}
+	// Last usage per message.id wins: msg-1 -> 30/60, msg-2 -> 5/5.
+	if got := out.Totals.Tokens.In; got != 35 {
+		t.Fatalf("tokens.in = %d, want 35 (last usage per message.id)", got)
+	}
+	if got := out.Totals.Tokens.Out; got != 65 {
+		t.Fatalf("tokens.out = %d, want 65", got)
+	}
+	if got := out.Totals.Calls["Bash"]; got != 1 {
+		t.Fatalf("Bash calls = %d, want 1", got)
+	}
+	if got := out.Totals.Calls["Read"]; got != 1 {
+		t.Fatalf("Read calls = %d, want 1 (uuid duplicate must not recount)", got)
+	}
+	if out.Skipped != 0 {
+		t.Fatalf("skipped = %d, want 0 (string content is valid)", out.Skipped)
+	}
+}
+
+func TestOverLongLineIsSkippedNotFatal(t *testing.T) {
+	old := maxLineBytes
+	maxLineBytes = 300 // valid lines below are ~210 bytes; the long one is ~600
+	defer func() { maxLineBytes = old }()
+	dir := writeTempJSONL(t, `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"s1","name":"Bash","input":{"command":"echo ok"}}],"usage":{"input_tokens":1,"output_tokens":1}},"sessionId":"s1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"s2","name":"Bash","input":{"command":"`+string(make([]byte, 500))+`"}}],"usage":{"input_tokens":1,"output_tokens":1}},"sessionId":"s1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"s3","name":"Bash","input":{"command":"echo ok2"}}],"usage":{"input_tokens":1,"output_tokens":1}},"sessionId":"s1"}
+`)
+	out, _, _, err := AnalyzePath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Skipped != 1 {
+		t.Fatalf("skipped = %d, want 1 (the over-long line)", out.Skipped)
+	}
+	if got := out.Totals.Turns; got != 2 {
+		t.Fatalf("turns = %d, want 2 (lines around the long one still count)", got)
+	}
+}
+
+func TestToolUseInputAsJSONString(t *testing.T) {
+	dir := writeTempJSONL(t, `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"j1","name":"Bash","input":"{\"command\":\"git status\"}"}],"usage":{"input_tokens":1,"output_tokens":1}},"sessionId":"s1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"j2","name":"Bash","input":"{\"command\":\"git status\"}"}],"usage":{"input_tokens":1,"output_tokens":1}},"sessionId":"s1"}
+`)
+	out, _, _, err := AnalyzePath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Totals.Calls["Bash"]; got != 2 {
+		t.Fatalf("Bash calls = %d, want 2", got)
+	}
+	rep := out.Sessions[0].Repeated
+	if len(rep) != 1 || rep[0].Command != "git status" || rep[0].Count != 2 {
+		t.Fatalf("repeated = %+v, want [{git status 2}] (input was a JSON string)", rep)
+	}
+}
+
+func TestServerToolUseCounted(t *testing.T) {
+	dir := writeTempJSONL(t, `{"type":"assistant","message":{"content":[{"type":"server_tool_use","id":"w1","name":"WebSearch","input":{"query":"x"}}],"usage":{"input_tokens":1,"output_tokens":1}},"sessionId":"s1"}
+`)
+	out, _, _, err := AnalyzePath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Totals.Calls["WebSearch"]; got != 1 {
+		t.Fatalf("WebSearch calls = %d, want 1", got)
+	}
+}
+
+func TestPiActiveBranchOnly(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"type":"session","version":3,"id":"pi-t","timestamp":"2026-11-08T00:00:00Z","cwd":"/tmp/p"}
+{"type":"message","id":"e1","parentId":null,"timestamp":"2026-11-08T00:00:00Z","message":{"role":"user","content":"hi","timestamp":1}}
+{"type":"message","id":"e2","parentId":"e1","timestamp":"2026-11-08T00:00:01Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"make build"}}],"usage":{"input":10,"output":5,"cacheRead":0,"cacheWrite":0},"timestamp":2}}
+{"type":"message","id":"e3","parentId":"e2","timestamp":"2026-11-08T00:00:02Z","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"ok"}],"isError":false,"timestamp":3}}
+{"type":"message","id":"e4","parentId":"e2","timestamp":"2026-11-08T00:00:03Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c9","name":"bash","arguments":{"command":"rm -rf /"}}],"usage":{"input":999,"output":999,"cacheRead":0,"cacheWrite":0},"timestamp":4}}
+{"type":"message","id":"e5","parentId":"e3","timestamp":"2026-11-08T00:00:04Z","message":{"role":"user","content":"done","timestamp":5}}
+{"type":"usage","id":"e6","parentId":"e5","timestamp":"2026-11-08T00:00:05Z","kind":"cache_warm","usage":{"input":0,"output":0,"cacheRead":100,"cacheWrite":0}}
+`
+	if err := os.WriteFile(filepath.Join(dir, "one.jsonl"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _, err := AnalyzePath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Sessions[0].ID; got != "pi-t" {
+		t.Fatalf("session id = %q, want pi-t (from pi header)", got)
+	}
+	if got := out.Totals.Turns; got != 1 {
+		t.Fatalf("turns = %d, want 1 (abandoned branch assistant must not count)", got)
+	}
+	if got := out.Totals.Tokens.In; got != 10 {
+		t.Fatalf("tokens.in = %d, want 10 (999 from the abandoned branch must not count)", got)
+	}
+	if got := out.Totals.Tokens.CacheRead; got != 100 {
+		t.Fatalf("cache_read = %d, want 100 (usage entry counts)", got)
+	}
+	if got := out.Totals.Calls["Bash"]; got != 1 {
+		t.Fatalf("Bash calls = %d, want 1", got)
+	}
+}

@@ -43,8 +43,8 @@ func SelfTest() *SelfTestResult {
 			result.OK = false
 		}
 	}
-	// Session fixtures: basic, malformed, two.
-	for _, name := range []string{"basic", "malformed", "two"} {
+	// Session fixtures: basic, malformed, two, chunked, pi.
+	for _, name := range []string{"basic", "malformed", "two", "chunked", "pi"} {
 		dir, err := materialiseFixture(name)
 		if err != nil {
 			add("session:"+name, false, err.Error())

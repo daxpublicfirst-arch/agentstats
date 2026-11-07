@@ -4,5 +4,5 @@ package fixtures
 
 import "embed"
 
-//go:embed all:basic all:malformed all:two
+//go:embed all:basic all:malformed all:two all:chunked all:pi
 var FS embed.FS
