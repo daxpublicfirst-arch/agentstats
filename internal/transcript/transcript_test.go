@@ -336,6 +336,42 @@ not json at all
 	}
 }
 
+// The 500 MiB limit must apply to a single .jsonl file exactly as it
+// applies to a directory. Before ADR-31 the single-file branch returned
+// without checking, so a 544 MiB file was parsed (and took 41 s) when
+// passed directly but refused with INPUT_TOO_LARGE when passed as its
+// containing directory.
+func TestDiscoverFilesInputLimit(t *testing.T) {
+	old := MaxInputBytes
+	defer func() { MaxInputBytes = old }()
+	MaxInputBytes = 100
+
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.jsonl")
+	if err := os.WriteFile(big, make([]byte, 200), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := DiscoverFiles(big); err == nil {
+		t.Fatal("single file over the limit: expected INPUT_TOO_LARGE, got nil")
+	} else if te, ok := err.(*ToolError); !ok || te.Code != "INPUT_TOO_LARGE" {
+		t.Fatalf("single file over the limit: error = %v, want INPUT_TOO_LARGE", err)
+	}
+	// The same file inside a directory must be refused the same way.
+	if _, _, _, err := AnalyzePath(dir); err == nil {
+		t.Fatal("directory over the limit: expected INPUT_TOO_LARGE, got nil")
+	} else if te, ok := err.(*ToolError); !ok || te.Code != "INPUT_TOO_LARGE" {
+		t.Fatalf("directory over the limit: error = %v, want INPUT_TOO_LARGE", err)
+	}
+
+	small := filepath.Join(dir, "small.jsonl")
+	if err := os.WriteFile(small, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := DiscoverFiles(small); err != nil {
+		t.Fatalf("single file under the limit: unexpected error %v", err)
+	}
+}
+
 func TestPiActiveBranchOnly(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"type":"session","version":3,"id":"pi-t","timestamp":"2026-11-08T00:00:00Z","cwd":"/tmp/p"}

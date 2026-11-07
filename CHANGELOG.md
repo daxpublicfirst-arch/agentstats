@@ -18,6 +18,11 @@ Keep a Changelog, and the project adheres to Semantic Versioning.
 - `tool_use.input` given as a JSON-encoded string is now read.
 - One line longer than 16 MiB no longer fails the whole file with
   `READ_ERROR`; it is skipped and counted, and reading continues.
+- The 500 MiB input limit is now enforced for a single `.jsonl` file
+  too: it used to be checked only for directories, so a 544 MB file
+  was parsed when passed directly but refused when passed as its
+  directory. Both paths now return `INPUT_TOO_LARGE` (exit 2).
+  `TestDiscoverFilesInputLimit` covers it.
 - Running with no arguments no longer prints usage text before the
   error envelope (stdout stays one parseable JSON object).
 
@@ -30,22 +35,24 @@ Keep a Changelog, and the project adheres to Semantic Versioning.
 - `server_tool_use` blocks counted as calls.
 - Parallel parsing for files over 32 MiB (byte-range chunks, global
   dedupe); output is byte-identical to serial parsing, enforced by
-  `TestParallelMatchesSerial` and by a 544 MB run.
+  `TestParallelMatchesSerial` and by a 426.5 MiB run.
 - 17 CLI tests (`cmd/agentstats/main_test.go`) running the real binary
   as a subprocess: exit codes, stdout JSON, `--out`, `--request`
   envelope, telemetry.
 - `BenchmarkSession50MB` and `make test-arm64` (runs the arm64 binary
   under qemu-aarch64-static).
 - `docs/DESIGN.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`
-  (30 ADRs), `docs/CI.md` + `docs/ci.yml` (the CI workflow copy — the
+  (31 ADRs), `docs/CI.md` + `docs/ci.yml` (the CI workflow copy — the
   GitHub App cannot push `.github/workflows/`, 403).
 
 ### Changed
 
-- 544 MB / 1,800,000-turn transcript: ~41 s wall (was ~78 s serial),
-  under the 60 s limit; the 60 s deadline is now also checked while
-  reading a single file (`TIMEOUT`, exit 3).
-- `internal/transcript` coverage 69.1% → 74.1%; `cmd/agentstats`
+- 426.5 MiB / 1,400,000-turn transcript: ~22 s wall, under the
+  60 s limit, with exact counts; a 544 MB transcript is now refused
+  with `INPUT_TOO_LARGE` on both paths (see the Fixed entry above).
+  The 60 s deadline is now also checked while reading a single file
+  (`TIMEOUT`, exit 3).
+- `internal/transcript` coverage 69.1% → 76.4%; `cmd/agentstats`
   coverage stays 0.0% by design (subprocess tests — see
   `docs/ARCHITECTURE.md`).
 

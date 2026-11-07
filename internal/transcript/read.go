@@ -40,7 +40,11 @@ const Version = "0.1.1"
 const ToolName = "agentstats"
 
 // MaxInputBytes is the plugin limit: at most 500 MiB of transcript input.
-const MaxInputBytes = 500 * 1024 * 1024
+// It is a var, not a const, so tests can lower it (same pattern as
+// parallelMinBytes). It must be enforced on every input path: a single
+// file used to bypass it, because only the directory branch checked the
+// total (see ADR-31).
+var MaxInputBytes = int64(500 * 1024 * 1024)
 
 // MaxDuration is the plugin limit: a run should finish within 60s.
 const MaxDuration = 60 * time.Second
@@ -361,6 +365,12 @@ func DiscoverFiles(path string) ([]string, int64, error) {
 	}
 	if !info.IsDir() {
 		if strings.HasSuffix(strings.ToLower(abs), ".jsonl") {
+			if info.Size() > MaxInputBytes {
+				return nil, info.Size(), newToolError("INPUT_TOO_LARGE",
+					fmt.Sprintf("transcript input is %d bytes, over the 500 MiB limit", info.Size()),
+					"analyse a smaller transcript file",
+					"split the transcript into smaller parts", 2)
+			}
 			return []string{abs}, info.Size(), nil
 		}
 		return nil, 0, newToolError("NO_TRANSCRIPT",

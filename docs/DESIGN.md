@@ -164,7 +164,9 @@ Session ids come from the `sessionId` field (Claude) or the header
 ## Limits and failure behaviour
 
 - **500 MiB input limit**: enforced before reading, from the summed
-  file sizes. Over it: `INPUT_TOO_LARGE`, exit 2.
+  file sizes — on both paths: a directory sums its files, a single
+  file is checked directly (the single-file check was missing until
+  ADR-31). Over it: `INPUT_TOO_LARGE`, exit 2.
 - **60 s deadline**: enforced while reading (checked every 4096
   lines), not just between files. Over it: `TIMEOUT`, exit 3. A run
   that is killed by the harness at 60 s would lose everything; the
@@ -191,7 +193,8 @@ magnitude):
 |---|---|
 | 11 MB / 40,000 turns | 0.87 s |
 | 52 MB / 170,000 turns | ~2.8 s (benchmark, parallel path) |
-| 544 MB / 1,800,000 turns | ~41 s wall under load (was ~78 s serial), under the 60 s limit; output byte-identical to the serial run |
+| 426.5 MiB / 1,400,000 turns | ~22 s wall under load, under the 60 s limit; exact counts; single-file and directory output identical |
+| 544 MB / 1,800,000 turns | Refused: `INPUT_TOO_LARGE`, exit 2, on both paths (over the 500 MiB limit). An earlier 544 MB run had succeeded only because the single-file path skipped the limit check — that bypass was a bug, fixed in ADR-31 |
 
 Files over 32 MiB are parsed in parallel (one goroutine per
 byte-range chunk, up to 8); see `ARCHITECTURE.md` for how the merge

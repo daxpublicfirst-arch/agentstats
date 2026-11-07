@@ -102,8 +102,8 @@ The merge is order-stable: per-message usage keeps the value from the
 highest byte offset; every other counter simply adds up. Parallel
 output is byte-identical to serial output, enforced by
 `TestParallelMatchesSerial` (which lowers the threshold so small
-files take the parallel path) and by the 544 MB run, whose parallel
-output was `cmp`-identical to the serial run.
+files take the parallel path) and by the 426.5 MiB run, whose
+single-file and directory outputs were identical.
 
 Files ≤ 32 MiB take the serial path: simpler, less overhead, same
 result. Pi files are always serial (their tree structure is not
@@ -120,12 +120,12 @@ holding them is acceptable; the Claude path stays streaming.
 
 | Layer | How | What it proves |
 |---|---|---|
-| Unit tests (`internal/transcript`, 21 tests) | `go test ./...` | Each counting rule in isolation: dedupe, chunked messages, uuid duplicates, string content, JSON-string input, server_tool_use, over-long lines, pi active branch, parallel==serial |
+| Unit tests (`internal/transcript`, 17 tests) | `go test ./...` | Each counting rule in isolation: dedupe, chunked messages, uuid duplicates, string content, JSON-string input, server_tool_use, over-long lines, pi active branch, parallel==serial, input-limit on both paths |
 | Fixtures (`--self-test`, 6 checks) | `agentstats --self-test` | Whole-file output matches hand-computed `expected.json` exactly, for `basic`, `malformed`, `two`, `chunked`, `pi` and `compare:two`. Fixtures are embedded, so it works from a built binary anywhere |
 | CLI tests (`cmd/agentstats`, 17 tests) | `go test ./cmd/agentstats` | The real built binary as a subprocess: exit codes (0/1/2/3), stdout JSON, `--out` file, `--request` envelope, stderr telemetry shape. Added in 0.1.1 because v0.1.0 had 0% coverage here |
 | Race detector | `go test -race ./...` | The parallel parser's shared state is race-free |
 | Benchmark | `go test -bench .` (`BenchmarkSession50MB`) | 52 MB / 170k turns; guards the 60 s limit at scale |
-| Real scale | manual, `session` on a generated 544 MB / 1.8M-turn file | 60 s limit and exact counts at the 500 MiB boundary; parallel output `cmp`-identical to serial |
+| Real scale | manual, `session` on a generated 426.5 MiB / 1.4M-turn file (single file and directory) | 60 s limit and exact counts near the 500 MiB boundary (~22 s); a 544 MB file is refused with `INPUT_TOO_LARGE` on both paths |
 | ARM64 | `make test-arm64` (qemu-aarch64-static) | The arm64 binary actually executes: version, doctor, self-test |
 | Release | `make release` | Static amd64/arm64 binaries + tarballs + `SHA256SUMS` verified with `sha256sum -c` |
 

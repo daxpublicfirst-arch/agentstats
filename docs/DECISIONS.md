@@ -212,8 +212,8 @@ Sources are linked where the decision rests on external facts.
   60 s limit (breaks the plugin contract).
 - **Trade-off:** ~200 lines of concurrency code and a new class of
   bug (cross-chunk references). Mitigated by `TestParallelMatchesSerial`
-  and by the 544 MB run whose parallel output was `cmp`-identical to
-  the serial run. Files ≤ 32 MiB stay serial.
+  and by the 426.5 MiB run whose single-file and directory outputs
+  were identical. Files ≤ 32 MiB stay serial.
 
 ## ADR-16: Failed results are attributed at finalize time, not when seen
 
@@ -261,6 +261,8 @@ Sources are linked where the decision rests on external facts.
 - **Decision:** `DiscoverFiles` sums sizes and rejects over-limit
   input with `INPUT_TOO_LARGE` (exit 2) before any file is opened.
 - **Trade-off:** None; the sum is cheap.
+- **Correction (ADR-31):** the single-file branch originally returned
+  without checking, so the limit only applied to directories.
 
 ## ADR-20: Deterministic output
 
@@ -391,3 +393,35 @@ Sources are linked where the decision rests on external facts.
   real ARM hardware (unavailable here).
 - **Trade-off:** QEMU proves the binary executes and behaves
   correctly; it does not prove native ARM performance.
+
+## ADR-31: The 500 MiB limit applies to a single file too
+
+- **Context:** The final clean-clone verification ran the tool on a
+  generated 544 MB / 1,800,000-turn file and got `INPUT_TOO_LARGE`
+  (exit 2) — correct. But the same file had been parsed successfully
+  earlier (41 s parallel, 78 s serial, exact counts). The two runs
+  disagreed because they took different paths: the directory branch
+  of `DiscoverFiles` summed sizes and rejected over-limit input, while
+  the single-file branch returned the file without any size check.
+- **Decision:** Enforce the limit in the single-file branch as well,
+  with the same `INPUT_TOO_LARGE` code and exit 2 (only the `fix`
+  text differs: "analyse a smaller transcript file"). `MaxInputBytes`
+  became a `var` (like `parallelMinBytes`) so tests can lower it.
+  `TestDiscoverFilesInputLimit` lowers it to 100 bytes and asserts
+  refusal on both the single-file and the directory path, and
+  acceptance under the limit.
+- **Alternatives:** Raise the limit to cover 544 MB (breaks the
+  plugin contract — the limit is part of the spec); keep the bypass
+  and document it (dishonest: the documented limit would not hold).
+- **Trade-off:** The 544 MB run is no longer reproducible as an
+  acceptance test — the largest accepted input is now ≤ 500 MiB.
+  Scale is re-proved with a 426.5 MiB / 1,400,000-turn file: ~22 s
+  wall (single file) and ~24 s (directory), exact counts
+  (1,400,000 turns, 1,400,000 Bash calls, tokens in 14,000,000 / out
+  28,000,000 / cache_read 140,000,000 / cache_write 70,000,000,
+  skipped 0), single-file and directory outputs identical. A 544 MB
+  file is now refused on both paths, verified.
+- **Sources:** the discrepancy was found by the project's own
+  verification, not by an external report — the earlier 41 s / 78 s
+  numbers were measured through the bypass and are struck from
+  `docs/DESIGN.md` and `docs/ARCHITECTURE.md`.

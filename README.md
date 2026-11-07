@@ -138,8 +138,9 @@ go test -bench . ./internal/transcript/   # BenchmarkSession50MB: 52 MB / 170k t
 ```
 
 Performance (4-CPU cloud VM, numbers move with load): 11 MB /
-40,000 turns in 0.87 s; 544 MB / 1,800,000 turns in ~41 s, under the
-60 s limit.
+40,000 turns in 0.87 s; 426.5 MiB / 1,400,000 turns in ~22 s, under
+the 60 s limit. A 544 MB transcript is refused (`INPUT_TOO_LARGE`,
+exit 2) because it is over the 500 MiB limit.
 
 ## Layout
 
