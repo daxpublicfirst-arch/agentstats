@@ -157,7 +157,10 @@ func run(args []string) int {
 	}
 
 	if len(args) == 0 {
-		fmt.Print(usageText)
+		// Print only the failure envelope on stdout: the plugin
+		// contract is one JSON object per run, and printing the
+		// usage text first would make stdout unparseable. The
+		// envelope's fix points at --help for humans.
 		return fail(&ok, "USAGE", "no command given",
 			"run one of: session, compare, top, self-test, doctor, version",
 			"run `agentstats --help` for usage", 2)
