@@ -1,0 +1,12 @@
+name = "agentstats"
+version = "0.1.0"
+kind = "cli"
+entry = "bin/agentstats"
+protocol = "arabica-plugin-v1"
+commands = ["session", "compare", "top", "self-test", "doctor", "version"]
+about = "Read a Claude Code or pi JSONL transcript and report calls, tokens, errors and repeated commands."
+example = "agentstats session ~/.claude/projects/-home-me-project --json"
+permissions = { read = ["--session", "--dir"], write = ["--out"], network = false }
+limits = { input_mb = 500, timeout_s = 60 }
+license = "MIT"
+source = "https://github.com/daxpublicfirst-arch/agentstats"
