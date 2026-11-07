@@ -3,10 +3,10 @@
 
 GO ?= go
 BIN ?= bin/agentstats
-VERSION ?= 0.1.0
+VERSION ?= 0.1.1
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test vet fmt self-test doctor clean release dist
+.PHONY: build test vet fmt self-test doctor clean release dist test-arm64 bench
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/agentstats
@@ -27,6 +27,17 @@ doctor: build
 	./$(BIN) doctor
 
 check: fmt vet test self-test doctor
+
+bench:
+	$(GO) test -run=NONE -bench=BenchmarkSession50MB -benchtime=1x ./internal/transcript/
+
+# Run the arm64 binary under qemu (proves it executes, not just builds).
+# Skips gracefully when qemu-aarch64-static is not installed.
+test-arm64: release
+	@if ! command -v qemu-aarch64-static >/dev/null 2>&1; then echo "qemu-aarch64-static not installed, skipping test-arm64"; exit 0; fi
+	qemu-aarch64-static dist/agentstats-linux-arm64 version
+	qemu-aarch64-static dist/agentstats-linux-arm64 doctor
+	qemu-aarch64-static dist/agentstats-linux-arm64 self-test
 
 clean:
 	rm -rf bin dist

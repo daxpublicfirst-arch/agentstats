@@ -34,7 +34,7 @@ import (
 )
 
 // Version is the tool version (semver, without a leading "v").
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 // ToolName is the tool name used in output, telemetry and plugin.toml.
 const ToolName = "agentstats"

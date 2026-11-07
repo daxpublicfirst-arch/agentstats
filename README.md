@@ -15,7 +15,7 @@ agentstats session ~/.claude/projects/-home-me-project --json
 ```
 
 ```json
-{"ok":true,"tool":"agentstats","version":"0.1.0",
+{"ok":true,"tool":"agentstats","version":"0.1.1",
  "sessions":[
    {"id":"...","file":"/abs/session.jsonl","turns":42,
     "tokens":{"in":100,"out":200,"cache_read":3000,"cache_write":400},
@@ -50,7 +50,7 @@ Every command supports `--json` and writes one JSON object to stdout.
 One telemetry line is written to stderr per run:
 
 ```json
-{"tool":"agentstats","version":"0.1.0","command":"session",
+{"tool":"agentstats","version":"0.1.1","command":"session",
  "duration_ms":123,"input_bytes":4567,"output_bytes":890,"ok":true}
 ```
 
@@ -64,10 +64,18 @@ JSON object is printed and the exit code is non-zero:
 
 ## What is counted
 
-- `turns` counts assistant messages, not tool calls.
-- `tokens` sums the `usage` row once per assistant message.
-  `api-request-blob` rows and `result` rows repeat that usage, so they
-  are not counted again.
+- `turns` counts assistant messages, not tool calls and not streaming
+  chunks: one Claude Code API message is several `assistant` lines
+  sharing `message.id`, and they count as one turn. Lines re-appended
+  after `/compact` (same `uuid`) are counted once.
+- `tokens` sums the `usage` row once per assistant message, taking
+  the last line's usage for a `message.id`. `api-request-blob` rows
+  and `result` rows repeat that usage, so they are not counted again.
+- Pi transcripts (format v3) are read natively: `session` header,
+  `toolCall` / `toolResult` / `bashExecution` messages, `usage`
+  entries, compaction and branch-summary usage — counting only the
+  active branch (see `docs/DESIGN.md`). Pi tool names are normalised
+  to Claude-style names (`bash` → `Bash`).
 - `calls` counts unique `tool_use` blocks by name, deduplicated by
   `tool_use.id`. An `api-request-blob` duplicates a call that also
   appears in an `assistant` event; each unique call is counted once.
@@ -85,9 +93,11 @@ JSON object is printed and the exit code is non-zero:
 - `errors` keeps the first 200 characters of each distinct failed
   result. Top 20 by count.
 - Lines that do not parse are skipped and counted in `skipped`;
-  they are not fatal. Empty lines are ignored.
+  they are not fatal. Empty lines are ignored. A line longer than
+  16 MiB is skipped and counted, never fatal to the file.
 - Output is deterministic: maps are sorted by key, lists by count
-  desc then name.
+  desc then name. Files over 32 MiB are parsed in parallel; the
+  output is byte-identical to serial parsing.
 
 `compare <a.json> <b.json>` reads two `session` outputs and prints the
 delta `b - a` for turns, tokens, calls and failed calls; map entries
@@ -123,7 +133,13 @@ bin/agentstats self-test   # must exit 0
 bin/agentstats doctor      # must exit 0
 make check                 # fmt + vet + test + self-test + doctor
 make release               # static linux-amd64/arm64 binaries, tarballs, SHA256SUMS in dist/
+make test-arm64            # run the arm64 binary under qemu-aarch64-static
+go test -bench . ./internal/transcript/   # BenchmarkSession50MB: 52 MB / 170k turns
 ```
+
+Performance (4-CPU cloud VM, numbers move with load): 11 MB /
+40,000 turns in 0.87 s; 544 MB / 1,800,000 turns in ~41 s, under the
+60 s limit.
 
 ## Layout
 
@@ -131,9 +147,11 @@ make release               # static linux-amd64/arm64 binaries, tarballs, SHA256
 agentstats/
   go.mod
   cmd/agentstats/main.go
-  internal/transcript/{read.go,count.go,repeat.go,compare.go,selftest.go,doctor.go}
-  fixtures/{basic,malformed,two}/   # .jsonl inputs + expected.json outputs
+  internal/transcript/{read.go,pi.go,count.go,repeat.go,compare.go,selftest.go,doctor.go}
+  fixtures/{basic,malformed,two,chunked,pi}/  # .jsonl inputs + expected.json outputs
   fixtures/fixtures.go              # embeds the fixtures into the binary
+  docs/{DESIGN,ARCHITECTURE,DECISIONS,CI}.md
+  docs/ci.yml                       # copy of the CI workflow (see docs/CI.md)
   schema/{request,response,error,telemetry}.json
   plugin.toml
   README.md
@@ -141,6 +159,11 @@ agentstats/
   CHANGELOG.md
   Makefile
 ```
+
+The design, the architecture and the reasoning behind every decision
+are documented in `docs/`: start with `docs/DESIGN.md`, then
+`docs/DECISIONS.md` (one ADR per decision, with alternatives,
+trade-offs and sources).
 
 ## Corrections to the original task draft
 
@@ -164,18 +187,21 @@ instead of followed literally:
   rows; counting it would double-count tokens, so it is ignored.
 - `top`'s output shape was unspecified; it returns
   `{ok, by, limit, sessions:[{id,file,turns,tokens,calls,errors}], total, ...}`.
-- The 60 s limit is enforced as a deadline while reading; the 500 MiB
+- The 60 s limit is enforced as a deadline while reading (checked
+  every 4096 lines, including inside a single file); the 500 MiB
   input limit is enforced before reading.
 - The GitHub MCP tools available to this session expose no create-tag
-  or create-release operation, so the `v0.1.0` tag and the GitHub
+  or create-release operation, so the `v0.1.1` tag and the GitHub
   release cannot be created through them; the release tarballs are
   produced by `make release` instead. The tag can be created from a
-  checkout with `git tag v0.1.0 && git push origin v0.1.0`.
+  checkout with `git tag v0.1.1 && git push origin v0.1.1`.
 - The Muse GitHub App cannot write `.github/workflows/ci.yml` (403 —
-  the app lacks the `workflows` permission), so the CI file lives in
-  this checkout but is not committed by the app; add it from your own
-  checkout or the web UI. The workflow itself only runs
-  `go vet`, `go test`, `self-test` and `doctor`.
+  the app lacks the `workflows` permission; a direct push attempt was
+  made and failed exactly that way), so the CI file lives in this
+  checkout but is not on `main`. A copy is kept at `docs/ci.yml` with
+  install instructions in `docs/CI.md`; add it from your own checkout
+  in one step. The workflow itself only runs `go vet`, `go test`,
+  `self-test` and `doctor`.
 
 ## Limitations
 
@@ -186,3 +212,10 @@ instead of followed literally:
   the tool name `unknown`.
 - Session ids come from the `sessionId` field when present, otherwise
   from the file name.
+- A transcript whose only usage is in `result` rows (`--print`-only,
+  no assistant rows) reports 0 tokens; `result` usage is ignored by
+  design (see ADR-06 in `docs/DECISIONS.md`).
+- A pi file without its `session` header line is treated as
+  Claude-shaped; its pi-only entries are ignored.
+- The arm64 binary is verified under qemu, not on real ARM hardware
+  (`make test-arm64`).

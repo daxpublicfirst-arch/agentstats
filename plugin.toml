@@ -1,5 +1,5 @@
 name = "agentstats"
-version = "0.1.0"
+version = "0.1.1"
 kind = "cli"
 entry = "bin/agentstats"
 protocol = "arabica-plugin-v1"

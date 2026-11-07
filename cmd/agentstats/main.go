@@ -45,7 +45,7 @@ type requestEnvelope struct {
 	} `json:"args"`
 }
 
-const usageText = `agentstats 0.1.0 — read a Claude Code or pi JSONL transcript and report calls, tokens, errors and repeated commands.
+const usageText = `agentstats 0.1.1 — read a Claude Code or pi JSONL transcript and report calls, tokens, errors and repeated commands.
 
 Usage:
   agentstats session <dir> [--json] [--out <dir>]

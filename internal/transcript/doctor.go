@@ -42,7 +42,7 @@ func Doctor() *DoctorResult {
 		_ = os.RemoveAll(tmp)
 	}
 	_, err = fs.ReadDir(fixtures.FS, "basic")
-	add("fixtures", err == nil, "embedded fixtures are present (basic/malformed/two)")
+	add("fixtures", err == nil, "embedded fixtures are present (basic/malformed/two/chunked/pi)")
 	add("network", true, "no network is used or required")
 	result.OK = true
 	for _, c := range result.Checks {
