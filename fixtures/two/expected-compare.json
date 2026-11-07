@@ -1,0 +1,1 @@
+{"a":"<fixture>/expected-a.json","b":"<fixture>/expected-b.json","delta":{"calls":{"Bash":1},"failed":{"Bash":-1},"tokens":{"in":96,"out":186},"turns":1},"ok":true}
